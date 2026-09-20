@@ -77,6 +77,43 @@ def test_ingest_stream_endpoint():
     assert last_event["dry_run"] is True
 
 
+def test_ingest_file_stream_endpoint():
+    req_body = {
+        "file_path": "corpus_extracted/patents_act_1970.txt",
+        "act_name": "The Patents Act, 1970",
+        "doc_id": "in_pat_1970",
+        "dry_run": True,
+    }
+    response = client.post("/api/ingest/file-stream", json=req_body)
+    assert response.status_code == 200
+    lines = [line.strip() for line in response.text.strip().split("\n") if line.strip()]
+    assert len(lines) >= 3
+    import json
+    first_event = json.loads(lines[0])
+    assert first_event["type"] == "file_start"
+    # Find chunk step
+    chunk_events = [json.loads(l) for l in lines if json.loads(l).get("step") == "chunk"]
+    assert len(chunk_events) > 0
+    assert chunk_events[-1]["chunks_count"] >= 2
+    last_event = json.loads(lines[-1])
+    assert last_event["type"] == "file_done"
+    assert last_event["status"] == "Dry-run Success"
+
+
+def test_corpus_clear_endpoint():
+    # Test that /api/corpus/clear resets the index successfully
+    response = client.post("/api/corpus/clear")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "Success"
+    assert data["total"] == 0
+
+    # Verify corpus index is now 0
+    get_res = client.get("/api/corpus/index")
+    assert get_res.status_code == 200
+    assert get_res.json()["total"] == 0
+
+
 if __name__ == "__main__":
     print("Testing Admin API Endpoints...")
     test_health_endpoints()
@@ -89,5 +126,9 @@ if __name__ == "__main__":
     print("  [PASS] test_ingest_file_dry_run_endpoint")
     test_ingest_stream_endpoint()
     print("  [PASS] test_ingest_stream_endpoint")
+    test_ingest_file_stream_endpoint()
+    print("  [PASS] test_ingest_file_stream_endpoint")
+    test_corpus_clear_endpoint()
+    print("  [PASS] test_corpus_clear_endpoint")
     print("\nALL ADMIN API TESTS PASSED SUCCESSFULLY!")
 

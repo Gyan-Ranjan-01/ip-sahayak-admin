@@ -334,6 +334,61 @@ Section 6 Application for intellectual property rights
     assert "[Act: The Biological Diversity Act, 2002" in bda_chunks[1].content
 
 
+def test_duplicate_file_overwrite_deduplication():
+    """
+    Verify that re-ingesting a duplicate or modified file overwrites previous chunks
+    instead of accumulating duplicates in Qdrant.
+    """
+    from qdrant_client import QdrantClient, models as qmodels
+    from app.services.etl.etl_ingestion_pipeline import VECTOR_DIMENSION
+
+    # Use in-memory Qdrant instance for isolated testing
+    test_client = QdrantClient(location=":memory:")
+    test_client.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=qmodels.VectorParams(size=VECTOR_DIMENSION, distance=qmodels.Distance.COSINE),
+    )
+
+    pipeline = ETLIngestionPipeline()
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value.tolist.return_value = [[0.05] * VECTOR_DIMENSION]
+
+    with patch.object(pipeline, "_get_qdrant_client", return_value=test_client), \
+         patch.object(pipeline, "_get_embedder", return_value=mock_embedder), \
+         patch.object(pipeline, "init_qdrant_collection", return_value=True):
+
+        # 1. First Ingestion: 3 chunks for doc_dup_test
+        chunks_v1 = [
+            LegalChunk(doc_id="doc_dup_test", act_name="Test Act", section_name=f"Section {i}", content=f"Text {i}", source_file="test_doc.txt")
+            for i in range(1, 4)
+        ]
+        mock_embedder.encode.return_value.tolist.return_value = [[0.1 * i] * VECTOR_DIMENSION for i in range(3)]
+        inserted_v1 = pipeline.upsert_vectors(chunks_v1)
+        assert inserted_v1 == 3
+        count_v1 = test_client.count(COLLECTION_NAME).count
+        assert count_v1 == 3, f"Expected 3 points, got {count_v1}"
+
+        # 2. Duplicate / Re-upload Ingestion: modified content with only 2 chunks for the SAME file
+        chunks_v2 = [
+            LegalChunk(doc_id="doc_dup_test", act_name="Test Act Modified", section_name=f"Section {i}", content=f"Updated Text {i}", source_file="test_doc.txt")
+            for i in range(1, 3)
+        ]
+        mock_embedder.encode.return_value.tolist.return_value = [[0.2 * i] * VECTOR_DIMENSION for i in range(2)]
+        inserted_v2 = pipeline.upsert_vectors(chunks_v2)
+        assert inserted_v2 == 2
+
+        # 3. CRITICAL: Count must be 2, NOT 5 (3 + 2)! Old chunks must be overwritten!
+        count_v2 = test_client.count(COLLECTION_NAME).count
+        assert count_v2 == 2, f"Expected 2 points after overwrite, got {count_v2} (duplicates were not overwritten!)"
+
+        # Verify remaining points belong to the updated content
+        points = test_client.scroll(collection_name=COLLECTION_NAME, limit=10)[0]
+        assert len(points) == 2
+        for pt in points:
+            assert pt.payload["act_name"] == "Test Act Modified"
+            assert "Updated Text" in pt.payload["text"]
+
+
 if __name__ == "__main__":
     print("Running ETL Pipeline Tests...")
     test_text_cleaner_headers_and_hyphenation()
@@ -352,4 +407,6 @@ if __name__ == "__main__":
     print("  [PASS] test_complete_act_with_toc_and_bare_numbering")
     test_multi_act_compendium_auto_extraction()
     print("  [PASS] test_multi_act_compendium_auto_extraction")
-    print("\nALL 8 TEST CASES PASSED SUCCESSFULLY!")
+    test_duplicate_file_overwrite_deduplication()
+    print("  [PASS] test_duplicate_file_overwrite_deduplication")
+    print("\nALL 9 TEST CASES PASSED SUCCESSFULLY!")

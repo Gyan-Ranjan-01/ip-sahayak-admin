@@ -43,6 +43,12 @@
       </div>
 
       <div class="header-actions">
+        <button id="btn-open-qdrant-cloud" class="btn btn-cloud-qdrant" title="Explore live chunks stored in Qdrant Cloud">
+          <span class="btn-emoji">🧠</span> Qdrant Cloud
+        </button>
+        <button id="btn-open-neo4j-cloud" class="btn btn-cloud-neo4j" title="Explore knowledge graph stored in Neo4j Cloud">
+          <span class="btn-emoji">🕸️</span> Neo4j Cloud
+        </button>
         <button id="btn-refresh" class="btn btn-outline" title="Refresh Corpus Data">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
           Refresh
@@ -77,10 +83,13 @@
         </div>
       </div>
 
-      <div class="card kpi-card">
+      <div class="card kpi-card kpi-clickable" id="card-kpi-qdrant" title="Click to open Qdrant Cloud Explorer">
         <div class="kpi-icon-wrap bg-indigo-subtle text-indigo">🧠</div>
         <div class="kpi-details">
-          <span class="kpi-label">Qdrant Vector DB</span>
+          <div class="kpi-header-row">
+            <span class="kpi-label">Qdrant Vector DB</span>
+            <span class="kpi-nav-link">Open Cloud ↗</span>
+          </div>
           <div class="db-status-row">
             <span id="qdrant-indicator" class="dot dot-amber"></span>
             <span id="qdrant-status-text" class="status-label">Checking...</span>
@@ -89,10 +98,13 @@
         </div>
       </div>
 
-      <div class="card kpi-card">
+      <div class="card kpi-card kpi-clickable" id="card-kpi-neo4j" title="Click to open Neo4j Cloud Explorer">
         <div class="kpi-icon-wrap bg-purple-subtle text-purple">🕸️</div>
         <div class="kpi-details">
-          <span class="kpi-label">Neo4j Knowledge Graph</span>
+          <div class="kpi-header-row">
+            <span class="kpi-label">Neo4j Knowledge Graph</span>
+            <span class="kpi-nav-link">Open Cloud ↗</span>
+          </div>
           <div class="db-status-row">
             <span id="neo4j-indicator" class="dot dot-amber"></span>
             <span id="neo4j-status-text" class="status-label">Checking...</span>
@@ -134,37 +146,153 @@
       </div>
     </section>
 
+    <!-- Real-Time Ingestion & Chunking Progress Tracker -->
+    <section id="progress-card" class="card progress-card hidden">
+      <div class="progress-card-header">
+        <div class="progress-title-group">
+          <div class="pulse-indicator">
+            <span class="pulse-ring"></span>
+            <span class="pulse-dot"></span>
+          </div>
+          <div>
+            <div class="progress-meta-row">
+              <span class="progress-card-title">Live Ingestion &amp; Chunking Progress</span>
+              <span id="progress-file-pill" class="pill-badge pill-primary">document.pdf</span>
+              <span id="progress-stage-pill" class="pill-badge pill-neutral">Extracting</span>
+            </div>
+            <p id="progress-status-desc" class="progress-status-desc">Initializing document extraction pipeline...</p>
+          </div>
+        </div>
+        <div class="progress-percentage-group">
+          <span id="progress-percent-val" class="progress-percent-val">0%</span>
+          <button id="btn-dismiss-progress" class="btn-text-dim" title="Dismiss Tracker">&times;</button>
+        </div>
+      </div>
+
+      <!-- Pipeline Step Indicators -->
+      <div class="pipeline-stepper">
+        <div id="step-node-1" class="step-node step-pending">
+          <div class="step-circle"><span class="step-num">1</span><span class="step-check">✓</span></div>
+          <div class="step-label">Upload &amp; Clean</div>
+        </div>
+        <div class="step-line" id="step-line-1"></div>
+        <div id="step-node-2" class="step-node step-pending">
+          <div class="step-circle"><span class="step-num">2</span><span class="step-check">✓</span></div>
+          <div class="step-label">Text Extract</div>
+        </div>
+        <div class="step-line" id="step-line-2"></div>
+        <div id="step-node-3" class="step-node step-pending">
+          <div class="step-circle"><span class="step-num">3</span><span class="step-check">✓</span></div>
+          <div class="step-label">Chunking <span id="badge-chunk-count" class="step-counter-badge hidden">0</span></div>
+        </div>
+        <div class="step-line" id="step-line-3"></div>
+        <div id="step-node-4" class="step-node step-pending">
+          <div class="step-circle"><span class="step-num">4</span><span class="step-check">✓</span></div>
+          <div class="step-label">BGE Vectors</div>
+        </div>
+        <div class="step-line" id="step-line-4"></div>
+        <div id="step-node-5" class="step-node step-pending">
+          <div class="step-circle"><span class="step-num">5</span><span class="step-check">✓</span></div>
+          <div class="step-label">Qdrant &amp; Neo4j</div>
+        </div>
+        <div class="step-line" id="step-line-5"></div>
+        <div id="step-node-6" class="step-node step-pending">
+          <div class="step-circle"><span class="step-num">6</span><span class="step-check">✓</span></div>
+          <div class="step-label">Indexed</div>
+        </div>
+      </div>
+
+      <!-- Animated Progress Bar -->
+      <div class="progress-bar-track">
+        <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%;">
+          <div class="progress-bar-shimmer"></div>
+        </div>
+      </div>
+
+      <div class="progress-footer-info">
+        <div class="footer-info-left">
+          <span class="info-dot"></span>
+          <span id="progress-detailed-info">Stage: Waiting for stream...</span>
+        </div>
+        <div class="footer-info-right">
+          <span id="progress-stats-chunks">Chunks: <strong>0</strong></span>
+          <span class="sep">&bull;</span>
+          <span id="progress-stats-vectors">Vectors: <strong>0</strong></span>
+        </div>
+      </div>
+    </section>
+
     <!-- Corpus Document Table Section -->
     <section class="card table-card">
       <div class="table-toolbar">
         <div class="toolbar-left">
-          <h2 class="section-title">Corpus Statutory Documents</h2>
-          <span id="doc-count-badge" class="count-badge">0 files registered</span>
+          <div>
+            <div class="table-title-row">
+              <h2 class="section-title">Corpus Statutory Documents</h2>
+              <span id="doc-count-badge" class="count-badge">0 files registered</span>
+            </div>
+            <p class="section-subtitle">Verified legal statutes, official gazettes, and patent documents partitioned for RAG</p>
+          </div>
         </div>
         <div class="toolbar-right">
+          <button id="btn-section-upload" class="btn btn-primary btn-sm" title="Upload new legal file">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Upload File
+          </button>
+          <button id="btn-clear-corpus" class="btn btn-outline btn-sm" title="Clear All Documents from Index">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Clear Index
+          </button>
           <div class="search-box">
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input id="search-input" type="text" placeholder="Filter by statute, title, or type..." class="input-control" />
+            <input id="search-input" type="text" placeholder="Filter statutes, titles, or types..." class="input-control" />
           </div>
         </div>
       </div>
 
-      <div class="table-responsive">
+      <!-- Filter Tabs Row -->
+      <div class="corpus-filter-tabs">
+        <button class="corpus-tab active" data-filter="all">All Documents (<span id="tab-count-all">0</span>)</button>
+        <button class="corpus-tab" data-filter="Ingested">Ingested (<span id="tab-count-ingested">0</span>)</button>
+        <button class="corpus-tab" data-filter="Pending">Pending (<span id="tab-count-pending">0</span>)</button>
+        <button class="corpus-tab" data-filter="Failed">Failed (<span id="tab-count-failed">0</span>)</button>
+      </div>
+
+      <!-- Drag & Drop Empty State (Shown when 0 docs match) -->
+      <div id="corpus-empty-dropzone" class="corpus-dropzone hidden">
+        <input type="file" id="dropzone-file-input" class="hidden" accept=".txt,.pdf,.md" style="display: none;" />
+        <div class="dropzone-icon">⚖️</div>
+        <h3 class="dropzone-title">No Legal Documents in Corpus</h3>
+        <p class="dropzone-subtitle">Drag and drop legal bare acts (<code>.txt</code>), official gazettes (<code>.pdf</code>), or patent files here, or click to upload.</p>
+        <div class="dropzone-actions">
+          <button id="btn-dropzone-browse" class="btn btn-primary">Choose File to Chunk &amp; Ingest</button>
+        </div>
+        <div class="dropzone-features">
+          <span class="dropzone-feat">⚡ Auto-detects Act &amp; Year</span>
+          <span class="dropzone-feat">&bull;</span>
+          <span class="dropzone-feat">✂️ Hierarchical Breadcrumbs</span>
+          <span class="dropzone-feat">&bull;</span>
+          <span class="dropzone-feat">🧠 384-d BGE Dense Vectors</span>
+        </div>
+      </div>
+
+      <!-- Table Container -->
+      <div id="corpus-table-container" class="table-responsive">
         <table class="data-table">
           <thead>
             <tr>
               <th>Document / File</th>
-              <th>Act Name</th>
+              <th>Act Name &amp; Title</th>
               <th>Year</th>
-              <th>Jurisdiction</th>
-              <th>Document Type</th>
+              <th>Type</th>
+              <th>Chunks</th>
               <th>Status</th>
               <th class="text-right">Actions</th>
             </tr>
           </thead>
           <tbody id="corpus-table-body">
             <tr>
-              <td colspan="7" class="loading-cell">No documents registered. Upload a .txt or .pdf to start.</td>
+              <td colspan="7" class="loading-cell">Loading corpus records...</td>
             </tr>
           </tbody>
         </table>
@@ -256,6 +384,176 @@
           <button type="submit" class="btn btn-primary w-full">Upload & Register in Corpus</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       Qdrant Cloud Explorer GUI Modal
+       ========================================================================= -->
+  <div id="qdrant-cloud-modal" class="modal-backdrop hidden">
+    <div class="modal-dialog modal-dialog-xl">
+      <div class="modal-header">
+        <div class="cloud-modal-title-wrap">
+          <div class="cloud-badge-row">
+            <span class="pill-badge pill-indigo">🧠 Qdrant Vector Cloud</span>
+            <span id="qdrant-cloud-live-pill" class="pill-badge pill-success">Live AWS us-west-1</span>
+            <span id="qdrant-cloud-points-badge" class="pill-badge pill-neutral">Points: 0</span>
+          </div>
+          <h3 class="modal-title">Qdrant Cloud &bull; Vector Chunks Explorer</h3>
+          <p class="modal-subtitle">Real-time inspection of 384-dimensional dense vectors and statutory payloads stored in the cloud cluster</p>
+        </div>
+        <button id="btn-close-qdrant-cloud" class="btn-icon" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="modal-body cloud-modal-body">
+        <!-- Cloud Status Strip -->
+        <div class="cloud-info-strip">
+          <div class="cloud-info-left">
+            <div class="cloud-info-item">
+              <span class="cloud-info-label">Cloud Cluster:</span>
+              <code id="qdrant-cloud-endpoint" class="cloud-info-code">https://357d6adb-1dfc-45e3-85e1-9aae90d69332.us-west-1-0.aws.cloud.qdrant.io</code>
+            </div>
+            <div class="cloud-info-item">
+              <span class="cloud-info-label">Target Collection:</span>
+              <strong class="text-indigo">legal_chunks</strong> &bull; <span class="cloud-dim-tag">384-d Cosine</span>
+            </div>
+          </div>
+          <div class="cloud-info-actions">
+            <a href="https://cloud.qdrant.io" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" title="Open Qdrant Cloud Dashboard">
+              ↗ Qdrant Cloud Web
+            </a>
+            <button id="btn-refresh-qdrant-cloud" class="btn btn-primary btn-sm" title="Reload live chunks from Qdrant Cloud">
+              🔄 Refresh from Cloud
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter & Search Toolbar -->
+        <div class="cloud-toolbar">
+          <div class="search-box cloud-search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="qdrant-cloud-search-input" type="text" placeholder="Search verbatim chunk text, section name, or statute in Qdrant Cloud..." class="input-control" />
+          </div>
+          <div class="cloud-toolbar-filters">
+            <select id="qdrant-cloud-doc-select" class="select-control select-control-sm">
+              <option value="">All Documents in Cloud</option>
+            </select>
+            <select id="qdrant-cloud-limit-select" class="select-control select-control-sm">
+              <option value="25" selected>Show 25 Chunks</option>
+              <option value="50">Show 50 Chunks</option>
+              <option value="100">Show 100 Chunks</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Live Chunks List Container -->
+        <div id="qdrant-cloud-chunks-container" class="cloud-chunks-flow">
+          <div class="loading-cell">Connecting to Qdrant Cloud cluster &amp; fetching points...</div>
+        </div>
+      </div>
+
+      <div class="modal-footer cloud-modal-footer">
+        <div class="footer-meta">
+          <span id="qdrant-cloud-summary-text">Verified vectors directly queried from AWS us-west-1 Qdrant Cloud.</span>
+        </div>
+        <button id="btn-close-qdrant-cloud-footer" class="btn btn-outline">Close Explorer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       Neo4j Cloud Explorer GUI Modal
+       ========================================================================= -->
+  <div id="neo4j-cloud-modal" class="modal-backdrop hidden">
+    <div class="modal-dialog modal-dialog-xl">
+      <div class="modal-header">
+        <div class="cloud-modal-title-wrap">
+          <div class="cloud-badge-row">
+            <span class="pill-badge pill-purple">🕸️ Neo4j AuraDB Cloud</span>
+            <span id="neo4j-cloud-live-pill" class="pill-badge pill-neutral">Aura Cloud</span>
+            <span id="neo4j-cloud-triples-badge" class="pill-badge pill-neutral">Triples Verified</span>
+          </div>
+          <h3 class="modal-title">Neo4j Cloud &bull; Knowledge Graph Explorer</h3>
+          <p class="modal-subtitle">Interactive statutory knowledge graph, cross-references &amp; regulatory relationships</p>
+        </div>
+        <button id="btn-close-neo4j-cloud" class="btn-icon" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="modal-body cloud-modal-body">
+        <!-- Cloud Connection & Aura Info Strip -->
+        <div class="cloud-info-strip">
+          <div class="cloud-info-left">
+            <div class="cloud-info-item">
+              <span class="cloud-info-label">AuraDB Endpoint:</span>
+              <code id="neo4j-cloud-uri" class="cloud-info-code">neo4j+s://78ac68a3.databases.neo4j.io</code>
+            </div>
+            <div class="cloud-info-item">
+              <span class="cloud-info-label">Instance ID:</span>
+              <strong class="text-purple">78ac68a3</strong> &bull; User: <code>neo4j</code>
+            </div>
+          </div>
+          <div class="cloud-info-actions">
+            <a href="https://console.neo4j.io" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" title="Open Neo4j AuraDB Console">
+              ↗ AuraDB Console
+            </a>
+            <button id="btn-refresh-neo4j-cloud" class="btn btn-primary btn-sm" title="Refresh graph triples from cloud">
+              🔄 Refresh Graph
+            </button>
+          </div>
+        </div>
+
+        <!-- Cypher Query Console -->
+        <div class="cypher-console-box">
+          <div class="cypher-console-header">
+            <span class="cypher-console-title">⚡ Interactive Cypher Query Console</span>
+            <div class="cypher-presets">
+              <button class="btn-preset-cypher" data-query="MATCH (s:Statute)-[r]->(target) RETURN s.name, type(r), target.name LIMIT 25">Statutory Hierarchy</button>
+              <button class="btn-preset-cypher" data-query="MATCH (s:Section)-[r:CROSS_REFERENCES_PRIOR_ART]->(pad) RETURN s.name, type(r), pad.name">Section 3(p) TKDL</button>
+              <button class="btn-preset-cypher" data-query="MATCH (h:Herb)-[r:DOCUMENTED_IN]->(t:ClassicalText) RETURN h.botanical_name, h.common_name, t.name">Herb Prior Art</button>
+            </div>
+          </div>
+          <div class="cypher-input-row">
+            <input id="cypher-query-input" type="text" class="input-control cypher-input" value="MATCH (s:Statute)-[r]->(target) RETURN s.name, type(r), target.name LIMIT 25" />
+            <button id="btn-run-cypher" class="btn btn-purple btn-sm">▶ Run Cypher</button>
+          </div>
+          <div id="cypher-results-output" class="cypher-results-output hidden"></div>
+        </div>
+
+        <!-- Graph Triples Visual Stream -->
+        <div class="graph-explorer-section">
+          <h4 class="graph-heading">Verified Statutory Knowledge Graph Triples in Cloud:</h4>
+          <div id="neo4j-cloud-triples-container" class="cloud-triples-flow">
+            <div class="loading-cell">Loading knowledge graph triples from Neo4j Cloud...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer cloud-modal-footer">
+        <div class="footer-meta">
+          <span>Neo4j AuraDB Free instances pause when inactive; check <a href="https://console.neo4j.io" target="_blank" style="color:var(--chakra-blue); text-decoration:underline;">console.neo4j.io</a> to resume if necessary.</span>
+        </div>
+        <button id="btn-close-neo4j-cloud-footer" class="btn btn-outline">Close Explorer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chunk Raw Payload Inspector Modal -->
+  <div id="chunk-payload-modal" class="modal-backdrop hidden">
+    <div class="modal-dialog modal-dialog-md">
+      <div class="modal-header">
+        <div>
+          <span class="modal-eyebrow">Qdrant Cloud Point Payload</span>
+          <h3 id="chunk-payload-modal-title" class="modal-title">Vector Chunk Payload</h3>
+        </div>
+        <button id="btn-close-payload-modal" class="btn-icon" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <pre id="chunk-payload-json" class="code-block" style="max-height: 480px;"></pre>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-copy-payload-json" class="btn btn-outline">📋 Copy JSON</button>
+        <button id="btn-close-payload-modal-footer" class="btn btn-primary">Close</button>
+      </div>
     </div>
   </div>
 

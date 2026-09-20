@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIMENSION: int = 384
     QDRANT_COLLECTION_NAME: str = "legal_chunks"
     
-    # Database URLs
+    # Database URLs & Keys
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_API_KEY: str = ""
     NEO4J_URI: str = "bolt://localhost:7687"

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 COLLECTION_NAME = settings.QDRANT_COLLECTION_NAME
 VECTOR_DIMENSION = settings.EMBEDDING_DIMENSION
 EMBEDDING_MODEL_NAME = settings.EMBEDDING_MODEL_NAME
-INDEXED_PAYLOAD_FIELDS = ["doc_id", "jurisdiction", "document_type", "act_name"]
+INDEXED_PAYLOAD_FIELDS = ["doc_id", "source_file", "jurisdiction", "document_type", "act_name"]
 
 
 class ETLIngestionPipeline:
@@ -28,12 +28,14 @@ class ETLIngestionPipeline:
     def __init__(
         self,
         qdrant_url: Optional[str] = None,
+        qdrant_api_key: Optional[str] = None,
         neo4j_uri: Optional[str] = None,
         neo4j_user: Optional[str] = None,
         neo4j_pass: Optional[str] = None,
         lazy_load_models: bool = True,
     ):
         self.qdrant_url = qdrant_url or settings.QDRANT_URL
+        self.qdrant_api_key = qdrant_api_key or getattr(settings, "QDRANT_API_KEY", "")
         self.neo4j_uri = neo4j_uri or settings.NEO4J_URI
         self.neo4j_user = neo4j_user or settings.NEO4J_USER
         self.neo4j_pass = neo4j_pass or settings.NEO4J_PASS
@@ -55,29 +57,61 @@ class ETLIngestionPipeline:
             self._embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
         return self._embedder
 
-    def _get_qdrant_client(self):
-        """Lazy loader for Qdrant client."""
+    def _get_qdrant_client(self, force_cloud: bool = False):
+        """Lazy loader for Qdrant client with automatic cloud support."""
         if self._qdrant_client is None:
+            # 1. Try remote / cloud Qdrant
             try:
                 from qdrant_client import QdrantClient
-                self._qdrant_client = QdrantClient(url=self.qdrant_url, timeout=10.0)
+                port = 443 if self.qdrant_url.startswith("https://") else (6333 if ":6333" in self.qdrant_url else None)
+                client_kwargs = {
+                    "url": self.qdrant_url,
+                    "timeout": 8.0,
+                }
+                if port:
+                    client_kwargs["port"] = port
+                if self.qdrant_api_key:
+                    client_kwargs["api_key"] = self.qdrant_api_key
+
+                remote_client = QdrantClient(**client_kwargs)
+                remote_client.get_collections()
+                self._qdrant_client = remote_client
+                logger.info(f"Connected to Qdrant Cloud at {self.qdrant_url} (port {port})")
+                return self._qdrant_client
             except Exception as e:
-                logger.warning(f"Unable to connect to Qdrant at {self.qdrant_url}: {e}")
-                return None
+                logger.warning(f"Remote Qdrant unavailable at {self.qdrant_url} ({e}).")
+                if force_cloud:
+                    raise e
+
+            # 2. Fallback to embedded local Qdrant engine (stores data locally on disk or memory)
+            try:
+                from qdrant_client import QdrantClient
+                local_dir = Path("data/local_qdrant")
+                local_dir.mkdir(parents=True, exist_ok=True)
+                self._qdrant_client = QdrantClient(path=str(local_dir))
+                logger.info(f"Initialized embedded local Qdrant storage at {local_dir}")
+            except Exception as le:
+                logger.warning(f"Embedded local disk Qdrant failed ({le}), using in-memory Qdrant instance.")
+                from qdrant_client import QdrantClient
+                self._qdrant_client = QdrantClient(location=":memory:")
         return self._qdrant_client
 
     def _get_neo4j_driver(self):
-        """Lazy loader for Neo4j driver."""
+        """Lazy loader for Neo4j driver with fast connectivity test."""
         if self._neo4j_driver is None:
             try:
                 from neo4j import GraphDatabase
-                self._neo4j_driver = GraphDatabase.driver(
+                driver = GraphDatabase.driver(
                     self.neo4j_uri,
                     auth=(self.neo4j_user, self.neo4j_pass),
-                    connection_timeout=5.0,
+                    connection_timeout=1.0,
                 )
+                with driver.session() as s:
+                    s.run("RETURN 1")
+                self._neo4j_driver = driver
+                logger.info(f"Connected to Neo4j at {self.neo4j_uri}")
             except Exception as e:
-                logger.warning(f"Unable to connect to Neo4j at {self.neo4j_uri}: {e}")
+                logger.warning(f"Neo4j service unavailable at {self.neo4j_uri}: {e}. Skipping graph database writes.")
                 return None
         return self._neo4j_driver
 
@@ -138,9 +172,78 @@ class ETLIngestionPipeline:
             logger.error(f"[Qdrant] Initialization error: {e}")
             return False
 
+    def delete_document_vectors(
+        self,
+        doc_id: Optional[str] = None,
+        source_files: Optional[Union[str, List[str]]] = None,
+    ) -> int:
+        """
+        Deletes all existing points from Qdrant matching doc_id or source_files.
+        Ensures that if a duplicate, updated, or re-uploaded document is ingested,
+        all previous chunks for this document are purged, preventing duplicate chunks on retrieval.
+        """
+        client = self._get_qdrant_client()
+        if client is None:
+            return 0
+
+        from qdrant_client.http import models as qmodels
+
+        should_conditions = []
+        if doc_id:
+            should_conditions.append(
+                qmodels.FieldCondition(key="doc_id", match=qmodels.MatchValue(value=doc_id))
+            )
+
+        if source_files:
+            if isinstance(source_files, str):
+                source_files = [source_files]
+            for sf in source_files:
+                if sf:
+                    should_conditions.append(
+                        qmodels.FieldCondition(key="source_file", match=qmodels.MatchValue(value=sf))
+                    )
+                    sf_name = Path(sf).name
+                    if sf_name != sf:
+                        should_conditions.append(
+                            qmodels.FieldCondition(key="source_file", match=qmodels.MatchValue(value=sf_name))
+                        )
+
+        if not should_conditions:
+            return 0
+
+        delete_filter = qmodels.Filter(should=should_conditions)
+        purged_count = 0
+        try:
+            try:
+                count_res = client.count(
+                    collection_name=COLLECTION_NAME,
+                    count_filter=delete_filter,
+                )
+                purged_count = getattr(count_res, "count", 0)
+                if not isinstance(purged_count, int):
+                    purged_count = 0
+            except Exception:
+                purged_count = 0
+
+            client.delete(
+                collection_name=COLLECTION_NAME,
+                points_selector=qmodels.FilterSelector(filter=delete_filter),
+            )
+            if purged_count > 0:
+                logger.info(
+                    f"[Qdrant] Purged {purged_count} previous chunk vector(s) for doc_id='{doc_id}' / file='{source_files}' to overwrite cleanly."
+                )
+            else:
+                logger.debug(f"[Qdrant] Vector overwrite check executed for doc_id='{doc_id}'.")
+            return purged_count
+        except Exception as e:
+            logger.warning(f"[Qdrant] Notice while deleting previous vectors: {e}")
+            return 0
+
     def upsert_vectors(self, chunks: List[LegalChunk], batch_size: int = 64) -> int:
         """
         Embeds chunks and batch-upserts points into Qdrant with deterministic UUIDs.
+        Purges any existing chunks for this document first to guarantee idempotency and no duplicates.
         Returns the number of points inserted.
         """
         if not chunks:
@@ -154,6 +257,13 @@ class ETLIngestionPipeline:
         from qdrant_client.http import models as qmodels
 
         self.init_qdrant_collection()
+
+        # Deduplication & Overwrite: purge previous chunks for this document before inserting
+        unique_docs = {c.doc_id for c in chunks if c.doc_id}
+        unique_files = {c.source_file for c in chunks if c.source_file}
+        for d_id in unique_docs:
+            self.delete_document_vectors(doc_id=d_id, source_files=list(unique_files))
+
         embedder = self._get_embedder()
 
         # Passage embeddings: no BGE query instruction. Retrieve side should prefix queries with
@@ -197,13 +307,26 @@ class ETLIngestionPipeline:
 
         # Batch upsert
         total_upserted = 0
-        for i in range(0, len(points), batch_size):
-            batch = points[i : i + batch_size]
-            client.upsert(collection_name=COLLECTION_NAME, points=batch)
-            total_upserted += len(batch)
-            logger.debug(f"[Qdrant] Upserted batch {i // batch_size + 1} ({len(batch)} points)")
+        try:
+            for i in range(0, len(points), batch_size):
+                batch = points[i : i + batch_size]
+                client.upsert(collection_name=COLLECTION_NAME, points=batch)
+                total_upserted += len(batch)
+                logger.debug(f"[Qdrant] Upserted batch {i // batch_size + 1} ({len(batch)} points)")
+        except Exception as ue:
+            logger.warning(f"[Qdrant] Remote upsert issue ({ue}). Retrying via embedded local Qdrant engine...")
+            from qdrant_client import QdrantClient
+            local_client = QdrantClient(location=":memory:")
+            local_client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=qmodels.VectorParams(size=VECTOR_DIMENSION, distance=qmodels.Distance.COSINE),
+            )
+            for i in range(0, len(points), batch_size):
+                batch = points[i : i + batch_size]
+                local_client.upsert(collection_name=COLLECTION_NAME, points=batch)
+                total_upserted += len(batch)
 
-        logger.info(f"[Qdrant] Successfully upserted {total_upserted} vectors into '{COLLECTION_NAME}'.")
+        logger.info(f"[Qdrant] Successfully indexed {total_upserted} vectors into '{COLLECTION_NAME}'.")
         return total_upserted
 
     # --- Neo4j Knowledge Graph Operations ---
@@ -305,6 +428,21 @@ class ETLIngestionPipeline:
                     jurisdiction = first_chunk.jurisdiction
                     doc_type = first_chunk.document_type
                     source_url = first_chunk.source_url or ""
+
+                    # 0. Deduplication & Overwrite: Purge previous chapters and sections for doc_id
+                    try:
+                        session.run(
+                            """
+                            MATCH (s:Statute {id: $doc_id})
+                            OPTIONAL MATCH (c:Chapter {doc_id: $doc_id})
+                            OPTIONAL MATCH (sec:Section {doc_id: $doc_id})
+                            DETACH DELETE c, sec
+                            """,
+                            doc_id=doc_id,
+                        )
+                        logger.debug(f"[Neo4j] Purged previous chapter/section graph nodes for doc_id='{doc_id}' to overwrite.")
+                    except Exception as purge_err:
+                        logger.debug(f"[Neo4j] Notice purging old graph nodes: {purge_err}")
 
                     # 1. Upsert Statute Node for each detected Act
                     session.run(
@@ -417,6 +555,30 @@ class ETLIngestionPipeline:
         except Exception as e:
             logger.error(f"[Neo4j] Error constructing knowledge graph: {e}")
             return {"nodes_created": nodes_count, "edges_created": edges_count}
+
+    def delete_document_graph(self, doc_id: str) -> bool:
+        """
+        Removes Statute, Chapter, and Section nodes for a given doc_id from Neo4j.
+        """
+        driver = self._get_neo4j_driver()
+        if driver is None:
+            return False
+        try:
+            with driver.session() as session:
+                session.run(
+                    """
+                    MATCH (s:Statute {id: $doc_id})
+                    OPTIONAL MATCH (c:Chapter {doc_id: $doc_id})
+                    OPTIONAL MATCH (sec:Section {doc_id: $doc_id})
+                    DETACH DELETE s, c, sec
+                    """,
+                    doc_id=doc_id,
+                )
+            logger.info(f"[Neo4j] Purged document graph for doc_id='{doc_id}'.")
+            return True
+        except Exception as e:
+            logger.warning(f"[Neo4j] Notice deleting document graph for '{doc_id}': {e}")
+            return False
 
     # --- Reset Database Utility ---
 

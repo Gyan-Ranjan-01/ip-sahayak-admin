@@ -34,8 +34,8 @@ docs/
 !README.md
 
 # Data
-data/raw/
-data/processed/
+data/
+backend/data/
 corpus_index.csv
 corpus.zip
 corpus/

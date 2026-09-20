@@ -344,24 +344,105 @@ class LegalDocumentChunker:
         text = extract_text_from_file(path, format_type=format_type)
         return self.chunk_multi_act_document(text)
 
+    def _split_into_passages(self, text: str, max_chars: int = 1500, overlap: int = 150) -> List[str]:
+        """
+        Splits text into chunks of approximately max_chars with overlap,
+        respecting double line breaks, then sentence boundaries.
+        """
+        if len(text) <= max_chars:
+            return [text]
+
+        passages = []
+        paragraphs = re.split(r"(\n\s*\n)", text)
+        current = ""
+
+        for part in paragraphs:
+            if not part:
+                continue
+            if len(current) + len(part) <= max_chars:
+                current += part
+            else:
+                if current.strip():
+                    passages.append(current.strip())
+                    overlap_text = current[-overlap:] if len(current) > overlap else ""
+                    space_idx = overlap_text.find(" ")
+                    if space_idx != -1:
+                        overlap_text = overlap_text[space_idx + 1:]
+                    current = overlap_text + part
+                else:
+                    sentences = re.split(r"(?<=[.?!])\s+", part)
+                    sub_cur = ""
+                    for s in sentences:
+                        if len(sub_cur) + len(s) <= max_chars:
+                            sub_cur += (" " if sub_cur else "") + s
+                        else:
+                            if sub_cur.strip():
+                                passages.append(sub_cur.strip())
+                                sub_cur = s
+                            else:
+                                for k in range(0, len(s), max_chars - overlap):
+                                    passages.append(s[k : k + max_chars].strip())
+                    if sub_cur.strip():
+                        current = sub_cur
+        if current.strip():
+            passages.append(current.strip())
+
+        return passages if passages else [text]
+
+    def _add_content_chunks(
+        self,
+        chapter: Optional[str],
+        section_name: str,
+        section_title: Optional[str],
+        content: str,
+        chunks: List[LegalChunk],
+        max_chars: int = 2000,
+    ):
+        """Adds a chunk, splitting into partitioned sub-chunks if content is large."""
+        if len(content) <= max_chars:
+            chunks.append(self._create_chunk(chapter, section_name, section_title, content))
+        else:
+            sub_passages = self._split_into_passages(content, max_chars=1400, overlap=150)
+            for idx, passage in enumerate(sub_passages):
+                part_name = f"{section_name} (Part {idx + 1}/{len(sub_passages)})" if len(sub_passages) > 1 else section_name
+                chunks.append(self._create_chunk(chapter, part_name, section_title, passage))
+
     def _parse_sections(self, text: str, current_chapter: Optional[str], chunks: List[LegalChunk]):
         """
         Splits chapter text into individual sections, keeping sub-clauses intact.
+        Also handles non-statute documents (patents, articles, rules) and large sections gracefully.
         """
         section_splits = self.section_pattern.split(text)
 
-        # If no sections, treat content as general chapter preamble or general text
+        # If no sections, check for alternate headings or semantic passages
         if len(section_splits) == 1:
             content = section_splits[0].strip()
-            if content:
-                sec_name = "Preamble" if current_chapter == "Preamble" else "General"
-                chunks.append(self._create_chunk(current_chapter, sec_name, None, content))
+            if not content:
+                return
+
+            # Check for alternate legal / patent headers
+            alt_pattern = re.compile(
+                r"(?im)^((?:CLAIMS?|DESCRIPTION|FIELD\s+OF\s+THE\s+INVENTION|BACKGROUND(?:\s+OF\s+THE\s+INVENTION)?|SUMMARY\s+OF\s+THE\s+INVENTION|DETAILED\s+DESCRIPTION|EXAMPLES?|BRIEF\s+DESCRIPTION\s+OF\s+THE\s+DRAWINGS|ARTICLE\s+\d+|RULE\s+\d+|CLAUSE\s+\d+)[^\n]*)$"
+            )
+            alt_splits = alt_pattern.split(content)
+            if len(alt_splits) > 1:
+                # First part preamble
+                if alt_splits[0].strip():
+                    self._add_content_chunks(current_chapter, "General", None, alt_splits[0].strip(), chunks)
+                for j in range(1, len(alt_splits), 2):
+                    sec_title = alt_splits[j].strip().title()
+                    sec_body = alt_splits[j + 1].strip() if j + 1 < len(alt_splits) else ""
+                    self._add_content_chunks(current_chapter, sec_title, sec_title, sec_body, chunks)
+                return
+
+            default_sec_name = "Preamble" if current_chapter == "Preamble" else "General"
+            self._add_content_chunks(current_chapter, default_sec_name, None, content, chunks)
             return
 
         # Preamble text prior to Section 1 within this chapter
         ch_preamble = section_splits[0].strip()
         if ch_preamble:
-            chunks.append(self._create_chunk(current_chapter, "General", None, ch_preamble))
+            self._add_content_chunks(current_chapter, "General", None, ch_preamble, chunks)
 
         for i in range(1, len(section_splits), 2):
             raw_sec_header = section_splits[i].strip()
@@ -374,7 +455,7 @@ class LegalDocumentChunker:
             # Standardized section name (e.g. "Section 1 Short title" or "Section 3(p)")
             section_name = f"Section {first_header_line}"
 
-            # Extract section title if present (e.g. "What are not inventions" or "Traditional Knowledge Bar")
+            # Extract section title if present
             section_title = None
             title_match = re.search(r"^(?:Section\s+)?(?:\d+[a-zA-Z]*(?:\(\w+\))*)[.:\-—\s]+(.*)$", section_name, re.IGNORECASE)
             if title_match and title_match.group(1).strip():
@@ -383,14 +464,7 @@ class LegalDocumentChunker:
             # Verbatim content starts with section title / header, followed by sub-clauses
             full_sec_verbatim = f"Section {raw_sec_header}\n{sec_remainder}".strip()
 
-            chunks.append(
-                self._create_chunk(
-                    chapter=current_chapter,
-                    section_name=section_name,
-                    section_title=section_title,
-                    verbatim_content=full_sec_verbatim,
-                )
-            )
+            self._add_content_chunks(current_chapter, section_name, section_title, full_sec_verbatim, chunks)
 
     def _create_chunk(
         self,
