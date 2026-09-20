@@ -4,11 +4,7 @@ uvicorn==0.27.1
 pydantic==2.6.3
 pydantic-settings
 python-dotenv
-
-# Agent Orchestration
-langchain==0.1.11
-langgraph==0.0.26
-langchain-openai==0.0.8
+python-multipart
 
 # Data Ingestion & OCR
 PyMuPDF==1.23.22 # fitz
@@ -25,11 +21,3 @@ neo4j==5.18.0
 # Async Queue
 celery==5.3.6
 redis==5.0.3
-
-# Evaluation & Observability
-ragas==0.1.4
-langfuse==2.14.0
-
-# Compliance
-presidio-analyzer==2.2.353
-presidio-anonymizer==2.2.353
