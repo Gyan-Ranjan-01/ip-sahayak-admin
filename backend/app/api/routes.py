@@ -3,6 +3,7 @@ import re
 import csv
 import json
 import asyncio
+import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form
@@ -14,7 +15,10 @@ from app.services.etl.etl_ingestion_pipeline import ETLIngestionPipeline
 from app.services.etl.tasks import ingest_document_task, celery_app
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
 
 CORPUS_INDEX_FIELDS = [
     "file_path",
